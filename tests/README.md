@@ -1,0 +1,94 @@
+# Layered Testing
+
+This directory keeps repeatable validation entry points for TensorOS while only ESP32-C3 hardware is available.
+
+Current layers:
+
+- `check_build_contract.sh`
+  - verifies the active validated target still builds
+  - verifies placeholder targets fail early with the intended message
+  - verifies that `EXTRA_CFLAGS`-driven FS profile changes update the build-config stamp and rebuild the ELF instead of reusing stale objects
+- `check_image_layout.sh`
+  - verifies key image and linker invariants from `build/tensoros.map`
+- `check_process_core.sh`
+  - compiles and runs a host-side test for pure process and scheduler core logic
+- `check_kmem.sh`
+  - compiles and runs host-side tests for the minimal kernel allocator and event object lifecycle
+  - now also covers allocator diagnostics such as high-water marks, failure counts, live-allocation tracking, and stats snapshots
+- `check_runtime_catalog.sh`
+  - compiles and runs a host-side test for the runtime process catalog
+  - covers task-key lookup plus snapshot preservation of process label, default role, and entry metadata
+- `check_runtime_policy.sh`
+  - compiles and runs host-side tests for multiprocess and single-foreground runtime-policy behavior
+- `check_preempt_contract.sh`
+  - compiles and runs host-side tests for the cooperative and preemptive scheduler skeleton contract
+  - covers target-incapable and target-capable safe-point behavior plus nested `preempt_disable()` accounting
+- `check_runtime_manage.sh`
+  - compiles and runs a host-side test for the tiny runtime-management command path
+  - covers `help`, `runtime`, `ps`, `inspect <pid>`, `kmem`, `mailbox status`, `mailbox send <value>`, `mailbox recv`, `event signal`, `wake <pid>`, `kill <pid> [exit_code]`, `spawn list`, `spawn <role> <task>`, `demo status`, `demo auto on|off`, and `demo profile off|smoke`
+  - also covers bounded lifecycle inspection logging for one PID at a time
+  - also covers the line-buffer helper used by the UART0 command path
+- `check_runtime_loader.sh`
+  - compiles and runs a host-side test for the first loader-metadata layer
+  - covers stable app-key lookup, snapshotting app identity and version metadata, and bounded catalog validation including duplicate-key rejection
+- `check_runtime_display.sh`
+  - compiles and runs a host-side test for the first host-only `MS5` display-service contract
+  - covers bounded geometry and capability-flag queries, monotonic present counting, saturation behavior, and stable `EINVAL` or `ENOSYS` returns for bad requests
+- `check_runtime_resource.sh`
+  - compiles and runs a host-side test for the `MS5` package-shaped resource lookup contract
+  - covers relative resource-path validation, app-key lookup through the loader-owned catalog, and stable `ENOENT` or `EINVAL` returns for bad requests
+- `check_runtime_input.sh`
+  - compiles and runs a host-side test for the `MS5` input-service contract
+  - covers capability reporting, queue-depth reporting, and FIFO delivery of key, pointer, and focus events
+- `check_runtime_ui.sh`
+  - compiles and runs a host-side test for the shared `MS5` UI event and timer primitive layer
+  - covers bounded queue behavior, peek or pop semantics, timer re-arm and cancel behavior, next-due lookup, and timer-event emission into the shared event queue
+- `check_runtime_shell_path.sh`
+  - compiles and runs a host-side test for the FS-style shell `PATH` resolver
+  - covers colon-separated absolute search-path validation, `/system/bin`-style command lookup, absolute-path bypass, and stable `ENOENT` or `EINVAL` returns for bad lookups
+- `check_display_surface.sh`
+  - compiles and runs a host-side test for the efficient render-surface core
+  - covers dirty-rectangle tracking, back-buffer fill or blit, atomic publish hooks, front or back swap behavior, and partial-present rectangle extraction
+- `check_runtime_service.sh`
+  - compiles and runs a host-side test for the bounded service-session layer
+  - covers owner PID and provider PID preservation, provider-scoped invalidation, close behavior, and table-capacity exhaustion
+- `check_runtime_syscall.sh`
+  - compiles and runs a host-side test for the first syscall-style runtime interface scaffold
+  - covers typed process, event, mailbox, file, and service handles plus owner-PID tracking
+  - covers `getpid`, `sleep`, `kill`, `mkdir`, `handle_close`, `handle_dup`, `handle_info`, `process_self`, `process_info`, `process_terminate`, `process_spawn`, `process_spawnable_count`, `process_spawnable_info`, `service_count`, `service_info`, `service_open`, `service_request`, `app_count`, `app_info`, `app_launch`, `event_create`, `event_signal`, `mailbox_create`, `mailbox_send`, `mailbox_receive`, `file_open`, `file_read`, `file_write`, `file_seek`, `file_stat`, `file_readdir`, `file_remove`, and `file_rename`
+  - also covers POSIX-leaning status returns including `EACCES`, richer file-path errno names, foreign-handle rejection, last-alias close behavior, process, service, and app-manifest catalog discovery, owner-scoped handle cleanup for future process-exit teardown wiring, and the placeholder file-operation bridge
+- `check_runtime_fs.sh`
+  - compiles and runs a host-side test for the first in-memory file-system core plus syscall bridge
+  - covers directory creation, file creation through `open(..., CREATE, ...)`, read, write, seek, stat, readdir, rename, remove, truncate, and close
+  - also covers missing-parent, duplicate-path, directory type errors, remove-busy, remove-root, remove-non-empty-directory, sparse-write zero-fill, truncate clearing, directory lookup through `readdir`, rename edge cases, single-writer open rejection with `EBUSY`, and owner-aware `EACCES` rejection for foreign write-open, `mkdir`, `remove`, and `rename`
+- `check_runtime_fs_image.sh`
+  - compiles and runs a host-side test for the bounded persistent FS image layer
+  - covers export, validate, and import roundtrips, open-handle export rejection, sparse payload preservation, and tamper rejection for payload and root hash
+- `check_runtime_fs_oracle.sh`
+  - compiles and runs a host-side oracle test that compares TensorOS runtime-fs behavior against real macOS file and directory APIs under a temporary `/tmp` tree
+  - covers repeated binary write, patch, seek, sparse extension, truncate, directory listing, rename, remove, busy-directory cases, and persistent image roundtrips across both backends
+- `check_runtime_fs_stress.sh`
+  - compiles and runs a longer-lived host-side stress test for repeated reuse of the same in-memory FS instance
+  - covers sustained sparse writes, archive-slot renames, lookup through `readdir`, cleanup cycles, persistent image roundtrips, and `runtime_fs_validate()` invariant checks after mutation checkpoints
+- `check_sync.sh`
+  - compiles and runs host-side tests for the shared wait-queue and semaphore synchronization layer
+  - now also covers the small allocator-backed mutex and mailbox layers, including owner checks and wake-one handoff behavior
+  - also covers a service-style mailbox + event + mutex + semaphore round trip without requiring hardware
+- `hw_smoke_esp32c3.sh`
+  - runs the required ESP32-C3 build, flash, and delayed serial-capture workflow
+  - checks for boot, trap, process, and timer progress markers in real hardware output
+  - has now also been rerun successfully after the runtime-catalog and bounded-demo-topology update in both `multiprocess` and `single-foreground` modes, preserving the supervisor child-wait path on real hardware
+  - remains the required safety net even after the display-demo wiring, because the display demo reuses the supervisor rather than adding a separate process and must not regress the validated cooperative runtime path
+  - has now also been rerun successfully after the current `MS6` GC9A01 or CST816S demo wiring in both runtime modes
+  - the display demo now starts only after `tick >= 9000`, so smoke still validates the usual process and timer markers before display bring-up begins
+  - later delayed capture after a passing rerun also confirmed `[DISPLAY] gc9a01 ready`, `[DISPLAY] touch_irq_pin=8`, and `[DISPLAY] demo_ready=1` on real hardware
+  - later white-screen-only hardware reruns are still important for panel debugging, but they currently do not prove correct visual output because the panel remains visually black despite successful flash and serial bring-up markers
+- `hw_fs_esp32c3.sh`
+  - runs the ESP32-C3 FS stress process through the validated app-only flash path
+  - supports `FS_HW_PROFILE=smoke|mutation|stress` to scale round counts and serial-capture windows without changing cooperative-only target constraints
+  - has now been rerun successfully on real ESP32-C3 hardware for all three profiles after the persistent image foundation update, including in-process FS image export, validation, and import
+
+Rule for future work:
+
+- when a new abstraction layer or target hook is introduced, add or update the narrowest matching test layer here
+- do not rely on hardware-only validation when a build-contract or image-layout check can catch the regression earlier

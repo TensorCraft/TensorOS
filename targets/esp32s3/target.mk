@@ -1,0 +1,19 @@
+TARGET_NAME := esp32s3
+TARGET_PRETTY_NAME := ESP32-S3
+TARGET_ARCH := xtensa
+TARGET_SUPPORTED := 0
+TARGET_UNSUPPORTED_REASON := ESP32-S3 target is a placeholder only. Add arch/xtensa runtime code plus targets/esp32s3 linker, soc, and packaging support before selecting SOC_TARGET=esp32s3.
+ESPTOOL_CHIP := esp32s3
+IDF_TARGET := esp32s3
+TARGET_INCLUDE_DIR := $(TARGET_DIR)/include
+LINKER_SCRIPT := $(TARGET_DIR)/linker.ld
+BOOTLOADER_PROJECT_DIR := $(TARGET_DIR)/packaging/bootloader_project
+PARTITIONS_CSV := $(TARGET_DIR)/packaging/partitions.csv
+BOOTLOADER_BIN := $(BOOTLOADER_PROJECT_DIR)/build/bootloader/bootloader.bin
+PARTITION_TABLE_BIN := $(BOOTLOADER_PROJECT_DIR)/build/partition_table/partition-table.bin
+BOOTLOADER_IMAGE_DEPS := $(BOOTLOADER_PROJECT_DIR)/CMakeLists.txt $(BOOTLOADER_PROJECT_DIR)/sdkconfig.defaults $(BOOTLOADER_PROJECT_DIR)/main/CMakeLists.txt $(BOOTLOADER_PROJECT_DIR)/main/dummy.c $(PARTITIONS_CSV)
+BOOTLOADER_OFFSET := 0x0
+PARTITION_TABLE_OFFSET := 0x8000
+APP_OFFSET := 0x10000
+TARGET_SRCS_C :=
+TARGET_SRCS_S :=
