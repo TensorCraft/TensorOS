@@ -1,5 +1,8 @@
 # TensorOS bare-metal scaffold
 
+> [!WARNING]
+> This repository is still under active development. Core subsystems are incomplete, some hardware paths are experimental, and current functionality is not yet stable or feature-complete.
+
 This repo is a freestanding kernel scaffold currently validated on ESP32-C3.
 
 ## Current Bring-Up Status
