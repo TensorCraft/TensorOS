@@ -99,7 +99,7 @@ ifeq ($(TARGET_SUPPORTED),0)
 $(error $(TARGET_UNSUPPORTED_REASON))
 endif
 
-.PHONY: all clean check-toolchain app-image bootloader-image flash-image flash flash-full capture-serial load-ram monitor-usb monitor-uart0 test-build-contract test-image-layout test-process-core test-kmem test-runtime-policy test-runtime-catalog test-runtime-loader test-runtime-service test-runtime-display test-runtime-resource test-runtime-input test-runtime-ui test-runtime-shell-path test-display-surface test-preempt-contract test-runtime-manage test-runtime-syscall test-runtime-fs test-runtime-fs-image test-runtime-fs-oracle test-runtime-fs-stress test-runtime-stability-baseline test-sync test-hw-smoke test-hw-fs FORCE
+.PHONY: all clean check-toolchain app-image bootloader-image flash-image flash flash-full capture-serial load-ram monitor-usb monitor-uart0 test-build-contract test-image-layout test-process-core test-kmem test-runtime-policy test-runtime-catalog test-runtime-loader test-runtime-service test-runtime-display test-runtime-resource test-runtime-input test-runtime-ui test-runtime-shell-path test-display-surface test-display-layout test-preempt-contract test-runtime-manage test-runtime-syscall test-runtime-fs test-runtime-fs-image test-runtime-fs-oracle test-runtime-fs-stress test-runtime-stability-baseline test-sync test-hw-smoke test-hw-fs FORCE
 
 all: check-toolchain $(BUILD_DIR)/$(PROJECT).elf $(BUILD_DIR)/$(PROJECT).lst
 	$(SIZE) $(BUILD_DIR)/$(PROJECT).elf
@@ -237,6 +237,9 @@ test-runtime-shell-path:
 
 test-display-surface:
 	sh ./tests/check_display_surface.sh
+
+test-display-layout:
+	sh ./tests/check_display_layout_codegen.sh
 
 test-preempt-contract:
 	./tests/check_preempt_contract.sh

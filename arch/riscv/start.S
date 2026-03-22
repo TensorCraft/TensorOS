@@ -9,7 +9,11 @@
 
 _start:
     la sp, _stack_top
+    /* Keep gp initialization intact; linker relaxation can otherwise erase it. */
+    .option push
+    .option norelax
     la gp, __global_pointer$
+    .option pop
 
     la t0, __bss_start
     la t1, __bss_end

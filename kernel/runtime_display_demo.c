@@ -18,11 +18,25 @@ enum {
   DISPLAY_DEMO_PUBLISH_GRANULARITY = 16u,
 };
 
+#ifndef DISPLAY_DEMO_LAYOUT_EXPERIMENT
+#define DISPLAY_DEMO_LAYOUT_EXPERIMENT 0u
+#endif
+
+#define DISPLAY_DEMO_LAYOUT_EXPERIMENT_STABLE_EXPLICIT 0u
+#define DISPLAY_DEMO_LAYOUT_EXPERIMENT_LOCAL_ARRAYS 1u
+#define DISPLAY_DEMO_LAYOUT_EXPERIMENT_RODATA_DISPATCH 2u
+#define DISPLAY_DEMO_LAYOUT_EXPERIMENT_SWITCH_DISPATCH 3u
+
 static char g_display_tag[] = "DISPLAY";
 static char g_display_init_start[] = "init_start";
 static char g_display_panel_init_done[] = "panel_init_done";
 static char g_display_mode[] = "display_safe_mode";
 static char g_display_ready[] = "gc9a01 ready";
+static char g_display_layout_mode[] = "layout_mode";
+static char g_display_layout_mode_stable[] = "stable_explicit";
+static char g_display_layout_mode_local[] = "local_arrays";
+static char g_display_layout_mode_rodata[] = "rodata_dispatch";
+static char g_display_layout_mode_switch[] = "switch_dispatch";
 static char g_display_google_g_upper[] = "G";
 static char g_display_google_o_first[] = "o";
 static char g_display_google_o_second[] = "o";
@@ -43,6 +57,19 @@ static uint16_t g_google_blue = 0x001Fu;
 static uint16_t g_google_red = 0xF800u;
 static uint16_t g_google_yellow = 0xFFE0u;
 static uint16_t g_google_green = 0x07E0u;
+
+static const char *runtime_display_demo_layout_mode_name(void) {
+  switch (DISPLAY_DEMO_LAYOUT_EXPERIMENT) {
+  case DISPLAY_DEMO_LAYOUT_EXPERIMENT_LOCAL_ARRAYS:
+    return g_display_layout_mode_local;
+  case DISPLAY_DEMO_LAYOUT_EXPERIMENT_RODATA_DISPATCH:
+    return g_display_layout_mode_rodata;
+  case DISPLAY_DEMO_LAYOUT_EXPERIMENT_SWITCH_DISPATCH:
+    return g_display_layout_mode_switch;
+  default:
+    return g_display_layout_mode_stable;
+  }
+}
 
 static void runtime_display_demo_clear_backbuffer(uint16_t color) {
   (void)display_surface_fill_rect(&g_display_surface, 0, 0, DISPLAY_DEMO_WIDTH,
@@ -136,16 +163,59 @@ static void runtime_display_demo_draw_google_letter(uint16_t x, uint16_t y,
   runtime_display_demo_blit_scaled_glyph(x, y, g_display_glyph_buffer, scale);
 }
 
-static void runtime_display_demo_draw_google_wordmark(void) {
-  const uint16_t glyph_scale = 3u;
-  const uint16_t glyph_width = DISPLAY_DEMO_GLYPH_W * glyph_scale;
-  const uint16_t glyph_height = DISPLAY_DEMO_GLYPH_H * glyph_scale;
-  const uint16_t text_width = glyph_width * 6u;
-  const uint16_t origin_x = (uint16_t)((DISPLAY_DEMO_WIDTH - text_width) / 2u);
-  const uint16_t origin_y = (uint16_t)((DISPLAY_DEMO_HEIGHT - glyph_height) / 2u);
+static uint16_t runtime_display_demo_google_color_by_index(uint32_t index) {
+  switch (index) {
+  case 0u:
+    return g_google_blue;
+  case 1u:
+    return g_google_red;
+  case 2u:
+    return g_google_yellow;
+  case 3u:
+    return g_google_blue;
+  case 4u:
+    return g_google_green;
+  case 5u:
+    return g_google_red;
+  default:
+    return DISPLAY_DEMO_FOREGROUND;
+  }
+}
 
-  esp32c3_panel_gc9a01_set_madctl(0x08u);
-  runtime_display_demo_clear_backbuffer(DISPLAY_DEMO_BACKGROUND);
+static void runtime_display_demo_prepare_google_origin(uint16_t *x,
+                                                       uint16_t *y,
+                                                       uint16_t *glyph_width,
+                                                       uint16_t *glyph_scale) {
+  const uint16_t local_glyph_scale = 3u;
+  const uint16_t local_glyph_width = DISPLAY_DEMO_GLYPH_W * local_glyph_scale;
+  const uint16_t glyph_height = DISPLAY_DEMO_GLYPH_H * local_glyph_scale;
+  const uint16_t text_width = local_glyph_width * 6u;
+
+  if (glyph_scale != 0) {
+    *glyph_scale = local_glyph_scale;
+  }
+
+  if (glyph_width != 0) {
+    *glyph_width = local_glyph_width;
+  }
+
+  if (x != 0) {
+    *x = (uint16_t)((DISPLAY_DEMO_WIDTH - text_width) / 2u);
+  }
+
+  if (y != 0) {
+    *y = (uint16_t)((DISPLAY_DEMO_HEIGHT - glyph_height) / 2u);
+  }
+}
+
+static void runtime_display_demo_draw_google_wordmark_stable_explicit(void) {
+  uint16_t origin_x;
+  uint16_t origin_y;
+  uint16_t glyph_width;
+  uint16_t glyph_scale;
+
+  runtime_display_demo_prepare_google_origin(&origin_x, &origin_y, &glyph_width,
+                                             &glyph_scale);
   runtime_display_demo_draw_google_letter(origin_x, origin_y,
                                           g_display_google_g_upper,
                                           g_google_blue, glyph_scale);
@@ -164,6 +234,76 @@ static void runtime_display_demo_draw_google_wordmark(void) {
   runtime_display_demo_draw_google_letter((uint16_t)(origin_x + glyph_width * 5u),
                                           origin_y, g_display_google_e,
                                           g_google_red, glyph_scale);
+}
+
+static void runtime_display_demo_draw_google_wordmark_local_arrays(void) {
+  uint16_t origin_x;
+  uint16_t origin_y;
+  uint16_t glyph_width;
+  uint16_t glyph_scale;
+  char letters[6][2] = {"G", "o", "o", "g", "l", "e"};
+  uint16_t colors[6] = {0x001Fu, 0xF800u, 0xFFE0u, 0x001Fu, 0x07E0u, 0xF800u};
+
+  runtime_display_demo_prepare_google_origin(&origin_x, &origin_y, &glyph_width,
+                                             &glyph_scale);
+  for (uint32_t index = 0u; index < 6u; ++index) {
+    runtime_display_demo_draw_google_letter(
+        (uint16_t)(origin_x + glyph_width * index), origin_y, letters[index],
+        colors[index], glyph_scale);
+  }
+}
+
+static void runtime_display_demo_draw_google_wordmark_rodata_dispatch(void) {
+  uint16_t origin_x;
+  uint16_t origin_y;
+  uint16_t glyph_width;
+  uint16_t glyph_scale;
+  static const char *const letters[6] = {"G", "o", "o", "g", "l", "e"};
+  static const uint16_t colors[6] = {0x001Fu, 0xF800u, 0xFFE0u,
+                                     0x001Fu, 0x07E0u, 0xF800u};
+
+  runtime_display_demo_prepare_google_origin(&origin_x, &origin_y, &glyph_width,
+                                             &glyph_scale);
+  for (uint32_t index = 0u; index < 6u; ++index) {
+    runtime_display_demo_draw_google_letter(
+        (uint16_t)(origin_x + glyph_width * index), origin_y, letters[index],
+        colors[index], glyph_scale);
+  }
+}
+
+static void runtime_display_demo_draw_google_wordmark_switch_dispatch(void) {
+  uint16_t origin_x;
+  uint16_t origin_y;
+  uint16_t glyph_width;
+  uint16_t glyph_scale;
+  static const char *const letters[6] = {"G", "o", "o", "g", "l", "e"};
+
+  runtime_display_demo_prepare_google_origin(&origin_x, &origin_y, &glyph_width,
+                                             &glyph_scale);
+  for (uint32_t index = 0u; index < 6u; ++index) {
+    runtime_display_demo_draw_google_letter(
+        (uint16_t)(origin_x + glyph_width * index), origin_y, letters[index],
+        runtime_display_demo_google_color_by_index(index), glyph_scale);
+  }
+}
+
+static void runtime_display_demo_draw_google_wordmark(void) {
+  esp32c3_panel_gc9a01_set_madctl(0x08u);
+  runtime_display_demo_clear_backbuffer(DISPLAY_DEMO_BACKGROUND);
+  switch (DISPLAY_DEMO_LAYOUT_EXPERIMENT) {
+  case DISPLAY_DEMO_LAYOUT_EXPERIMENT_LOCAL_ARRAYS:
+    runtime_display_demo_draw_google_wordmark_local_arrays();
+    break;
+  case DISPLAY_DEMO_LAYOUT_EXPERIMENT_RODATA_DISPATCH:
+    runtime_display_demo_draw_google_wordmark_rodata_dispatch();
+    break;
+  case DISPLAY_DEMO_LAYOUT_EXPERIMENT_SWITCH_DISPATCH:
+    runtime_display_demo_draw_google_wordmark_switch_dispatch();
+    break;
+  default:
+    runtime_display_demo_draw_google_wordmark_stable_explicit();
+    break;
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -235,6 +375,8 @@ void runtime_display_demo_init(void) {
 
   reg_write(RTC_CNTL_STORE0_REG, 0xC102u);
   console_log(g_display_tag, g_display_mode);
+  console_log(g_display_tag, g_display_layout_mode);
+  console_log(g_display_tag, runtime_display_demo_layout_mode_name());
   console_log(g_display_tag, g_display_ready);
 
   runtime_display_demo_draw_google_wordmark();

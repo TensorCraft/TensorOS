@@ -57,6 +57,9 @@ Shapes that proved risky:
 
 - flash-backed string literals
 - larger flash `rodata` tables
+- compiler-emitted `.rodata.CSWTCH.*` lookup tables from `-Os`
+- compiler-emitted orphan `.srodata.*` sections when the source shape introduces
+  small read-only constants
 - indirect `rodata` dispatch structures
 - large dense `switch` logic under default `-Os` lowering
 - local array-driven text/color loops in the display demo
@@ -79,12 +82,12 @@ Concrete example from bring-up:
 
 ## Safe Working Rules
 
-Until the deeper root cause is fixed:
+With the startup fix in place:
 
 - keep a known-good visual baseline in `kernel/runtime_display_demo.c`
 - avoid reverting `MADCTL=0x08` unless re-proving the panel color order on hardware
-- prefer file-local `static` storage for display-demo text inputs
-- avoid introducing large local lookup tables or new dense dispatch logic into the demo path
+- keep a simple compile-time switch so risky text-path experiments can still be re-enabled
+  without disturbing the stable visual baseline
 - verify every experiment can be rolled back to the current colored `Google` baseline quickly
 
 ## Recommended Next Investigation
@@ -99,3 +102,47 @@ Good next targets:
 - minimize to the smallest repro that flips from working to broken
 - keep direct panel and software flush diagnostics available so panel regressions can be ruled out
   quickly
+
+## Current Root-Cause Model
+
+Current best-supported explanation:
+
+- the underlying failure is now traced further down than the display path:
+  on this RISC-V bring-up, `_start` was not reliably initializing `gp`
+  because `la gp, __global_pointer$` got linker-relaxed into a no-op form
+  under the active toolchain
+- the stable display-demo path works because its wordmark strings, color words, and
+  `font8x8` table are all intentionally DRAM-backed writable objects in `.data`
+- the risky variants are the ones that let GCC move display metadata into
+  flash-backed `.rodata` / `.srodata`, or synthesize table lookups such as
+  `.rodata.CSWTCH.*` under `-Os`
+- `display_surface` and the software flush path are not the differentiator here;
+  the meaningful flip is whether the compiler starts relying on `gp`-relative
+  small-data accesses for glyph-selection inputs and related metadata
+
+Evidence now captured in-tree:
+
+- disassembly of `_start` in rebuilt images showed `la gp, __global_pointer$`
+  relaxing to `mv gp, gp`, leaving `gp == 0` at runtime until explicitly fixed
+- `tests/display_layout_probe.c` is a minimal code-shape probe for:
+  - stable file-scope writable storage
+  - local stack arrays
+  - file-scope `const` rodata dispatch tables
+  - `switch` lowering under default `-Os`
+- `tests/check_display_layout_codegen.sh` verifies that:
+  - the stable explicit variant lands in writable small-data storage
+  - the rodata-dispatch variant emits flash-backed `.rodata.*` tables
+  - the default `-Os` switch variant emits `.rodata.CSWTCH.*`
+  - `-fno-jump-tables -fno-tree-switch-conversion` suppresses that table form
+- board-side validation after the startup fix shows that:
+  - the stable explicit colored-`Google` baseline still renders correctly
+  - the formerly risky `local_arrays` text/color loop variant also renders correctly
+  - software flush remains good, so the differentiator is startup/toolchain state rather
+    than the GC9A01 panel path itself
+
+Residual uncertainty:
+
+- the display symptom is now strongly explained by the `gp` initialization bug
+- `local_arrays` has been revalidated on hardware, but `rodata_dispatch` and
+  `switch_dispatch` still need the same post-fix board A/B if we want the full matrix
+  closed out in hardware rather than only by offline codegen evidence
