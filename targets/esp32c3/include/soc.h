@@ -235,6 +235,8 @@ static inline void reg_clear_bits(uint32_t reg, uint32_t mask) {
 #define SPI_CS0_DIS_BIT            BIT(0)
 #define SPI_BUF_AFIFO_RST_BIT      BIT(30)
 #define SPI_RX_AFIFO_RST_BIT       BIT(29)
+#define SPI_SLV_TX_SEG_TRANS_CLR_EN_BIT BIT(20)
+#define SPI_SLV_RX_SEG_TRANS_CLR_EN_BIT BIT(19)
 #define SPI_MST_WFULL_ERR_END_EN_BIT BIT(16)
 #define SPI_CLK_EN_BIT             BIT(0)
 #define SPI_MST_CLK_ACTIVE_BIT     BIT(1)

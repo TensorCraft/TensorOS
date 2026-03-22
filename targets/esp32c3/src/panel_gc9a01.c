@@ -15,8 +15,13 @@ enum {
 
 enum {
   GC9A01_SIGNAL_SETTLE_CYCLES = 32u,
-  GC9A01_SWSPI_HALF_CYCLES = 8u,
+  GC9A01_SPI_MAX_TRANSFER_BYTES = 64u,
+  GC9A01_RAMWR_TO_DATA_CYCLES = 0u,
 };
+
+#ifndef GC9A01_MADCTL_VALUE
+#define GC9A01_MADCTL_VALUE 0x48u
+#endif
 
 struct gc9a01_init_cmd {
   uint8_t command;
@@ -82,14 +87,36 @@ static uint16_t gc9a01_swap16(uint16_t value) {
   return (uint16_t)((value << 8) | (value >> 8));
 }
 
-static void gc9a01_set_addr_window(uint16_t x, uint16_t y, uint16_t width, uint16_t height);
-static void gc9a01_begin_ram_write(uint16_t x, uint16_t y, uint16_t width, uint16_t height);
+static uint16_t gc9a01_map_x(uint16_t x) {
+  return x;
+}
+
+static uint16_t gc9a01_map_rect_x(uint16_t x, uint16_t width) {
+  (void)width;
+  return x;
+}
+
+static uint16_t gc9a01_map_y(uint16_t y) {
+  return y;
+}
+
+static uint16_t gc9a01_map_rect_y(uint16_t y, uint16_t height) {
+  (void)height;
+  return y;
+}
+
+static void gc9a01_set_addr_window_locked(uint16_t x, uint16_t y, uint16_t width,
+                                          uint16_t height);
 static void gc9a01_write_rect_pixels(const uint16_t *pixels, uint16_t stride, uint16_t x, uint16_t y,
                                      uint16_t width, uint16_t height);
 static void gc9a01_write_rect_surface(const uint16_t *pixels, uint16_t stride,
                                       const struct display_rect *rect);
-static void gc9a01_spi_write_bytes(const uint8_t *data, uint32_t size);
-static void gc9a01_spi_write_u8(uint8_t value);
+static void gc9a01_write_rect_stream_pixels(const uint16_t *pixels, uint16_t stride, uint16_t x,
+                                            uint16_t y, uint16_t width, uint16_t height);
+static void gc9a01_spi_write_bytes_raw(const uint8_t *data, uint32_t size);
+static void gc9a01_spi_write_u8_raw(uint8_t value);
+static void gc9a01_spi_wait_idle(void);
+static void gc9a01_spi_prepare_tx_transaction(uint32_t bit_length);
 static void gc9a01_backlight_init(void);
 static void gc9a01_run_init_step(uint32_t index, uint8_t command, const uint8_t *data, uint8_t data_len,
                                  uint16_t delay_ms);
@@ -122,63 +149,119 @@ static void gc9a01_data_command(int level) {
 }
 
 static void gc9a01_spi_init(void) {
-  esp32c3_gpio_set_level(GC9A01_PIN_SCK, 0);
-  esp32c3_gpio_set_level(GC9A01_PIN_MOSI, 0);
+  uint32_t clock_reg = (3u << SPI_CLKDIV_PRE_SHIFT) | (3u << SPI_CLKCNT_N_SHIFT) |
+                       (1u << SPI_CLKCNT_H_SHIFT) | (3u << SPI_CLKCNT_L_SHIFT);
+
+  reg_set_bits(SYSTEM_PERIP_CLK_EN0_REG, SYSTEM_SPI2_CLK_EN_BIT);
+  reg_set_bits(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_SPI2_RST_BIT);
+  reg_clear_bits(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_SPI2_RST_BIT);
+
+  reg_write(SPI_CLK_GATE_REG, SPI_CLK_EN_BIT | SPI_MST_CLK_ACTIVE_BIT | SPI_MST_CLK_SEL_BIT);
+  reg_write(SPI_SLAVE_REG, 0u);
+  reg_write(SPI_DMA_CONF_REG, SPI_SLV_TX_SEG_TRANS_CLR_EN_BIT | SPI_SLV_RX_SEG_TRANS_CLR_EN_BIT);
+  reg_write(SPI_CTRL_REG, 0u);
+  reg_write(SPI_USER_REG, 0u);
+  reg_write(SPI_USER1_REG, 0u);
+  reg_write(SPI_USER2_REG, 0u);
+  reg_write(SPI_CLOCK_REG, clock_reg);
+  reg_write(SPI_DOUT_MODE_REG, 0u);
+  reg_write(SPI_MISC_REG, 0u);
+
+  esp32c3_gpio_config_output_function(GC9A01_PIN_SCK, PIN_FUNC_ALT_2_VALUE, FSPICLK_OUT_IDX);
+  esp32c3_gpio_config_output_function(GC9A01_PIN_MOSI, PIN_FUNC_ALT_2_VALUE, FSPID_OUT_IDX);
+  reg_write(SPI_CMD_REG, SPI_UPDATE_BIT);
+  gc9a01_spi_wait_idle();
 }
 
-static void gc9a01_spi_write_bit(uint8_t bit_value) {
-  esp32c3_gpio_set_level(GC9A01_PIN_MOSI, bit_value != 0u ? 1 : 0);
-  esp32c3_gpio_delay_cycles(GC9A01_SWSPI_HALF_CYCLES);
-  esp32c3_gpio_set_level(GC9A01_PIN_SCK, 1);
-  esp32c3_gpio_delay_cycles(GC9A01_SWSPI_HALF_CYCLES);
-  esp32c3_gpio_set_level(GC9A01_PIN_SCK, 0);
-  esp32c3_gpio_delay_cycles(GC9A01_SWSPI_HALF_CYCLES);
+static void gc9a01_spi_wait_idle(void) {
+  while ((reg_read(SPI_CMD_REG) & (SPI_UPDATE_BIT | SPI_USR_BIT)) != 0u) {
+    __asm__ volatile("nop");
+  }
 }
 
-static void gc9a01_spi_write_bytes(const uint8_t *data, uint32_t size) {
+static void gc9a01_spi_prepare_tx_transaction(uint32_t bit_length) {
+  reg_write(SPI_DMA_CONF_REG, SPI_BUF_AFIFO_RST_BIT | SPI_RX_AFIFO_RST_BIT);
+  reg_write(SPI_DMA_CONF_REG, SPI_SLV_TX_SEG_TRANS_CLR_EN_BIT | SPI_SLV_RX_SEG_TRANS_CLR_EN_BIT);
+  reg_write(SPI_USER_REG, SPI_USR_MOSI_BIT);
+  reg_write(SPI_USER1_REG, 0u);
+  reg_write(SPI_USER2_REG, 0u);
+  reg_clear_bits(SPI_CTRL_REG, SPI_DOUTDIN_BIT);
+  reg_clear_bits(SPI_USER_REG, SPI_CK_OUT_EDGE_BIT);
+  reg_clear_bits(SPI_MISC_REG, SPI_CK_IDLE_EDGE_BIT);
+  reg_write(SPI_MS_DLEN_REG, bit_length - 1u);
+  reg_write(SPI_CMD_REG, SPI_UPDATE_BIT);
+  gc9a01_spi_wait_idle();
+}
+
+static void gc9a01_spi_write_bytes_raw(const uint8_t *data, uint32_t size) {
   if ((data == 0) || (size == 0u)) {
     return;
   }
 
-  for (uint32_t i = 0u; i < size; ++i) {
-    uint8_t value = data[i];
-    for (uint32_t bit = 0u; bit < 8u; ++bit) {
-      gc9a01_spi_write_bit((uint8_t)(value & 0x80u));
-      value <<= 1u;
+  for (uint32_t offset = 0u; offset < size;) {
+    uint32_t chunk_bytes = size - offset;
+    if (chunk_bytes > GC9A01_SPI_MAX_TRANSFER_BYTES) {
+      chunk_bytes = GC9A01_SPI_MAX_TRANSFER_BYTES;
     }
+
+    for (uint32_t word_index = 0u; word_index < (GC9A01_SPI_MAX_TRANSFER_BYTES / sizeof(uint32_t));
+         ++word_index) {
+      uint32_t word = 0u;
+      uint32_t byte_index = word_index * sizeof(uint32_t);
+      uint32_t copy_len = 0u;
+
+      if (byte_index < chunk_bytes) {
+        copy_len = chunk_bytes - byte_index;
+        if (copy_len > sizeof(uint32_t)) {
+          copy_len = sizeof(uint32_t);
+        }
+        for (uint32_t i = 0u; i < copy_len; ++i) {
+          word |= ((uint32_t)data[offset + byte_index + i]) << (8u * i);
+        }
+      }
+
+      reg_write(SPI_W0_REG + (word_index * sizeof(uint32_t)), word);
+    }
+
+    gc9a01_spi_prepare_tx_transaction(chunk_bytes * 8u);
+    reg_write(SPI_CMD_REG, SPI_USR_BIT);
+    gc9a01_spi_wait_idle();
+    offset += chunk_bytes;
   }
 }
 
-static void gc9a01_spi_write_u8(uint8_t value) {
-  gc9a01_spi_write_bytes(&value, 1u);
+static void gc9a01_spi_write_u8_raw(uint8_t value) {
+  gc9a01_spi_write_bytes_raw(&value, 1u);
 }
 
-static void gc9a01_write_command(uint8_t command) {
+static void gc9a01_write_command_locked(uint8_t command) {
   reg_write(RTC_CNTL_STORE5_REG, 0xC320u);
   reg_write(RTC_CNTL_STORE2_REG, command);
   reg_write(RTC_CNTL_STORE3_REG, 0xC320u);
   gc9a01_data_command(0);
   reg_write(RTC_CNTL_STORE3_REG, 0xC321u);
-  gc9a01_spi_write_u8(command);
+  gc9a01_spi_write_u8_raw(command);
 }
 
-static void gc9a01_write_data_bytes(const uint8_t *data, uint32_t size) {
+static void gc9a01_write_data_bytes_locked(const uint8_t *data, uint32_t size) {
   if ((data == 0) || (size == 0u)) {
     return;
   }
 
   reg_write(RTC_CNTL_STORE5_REG, 0xC330u);
   gc9a01_data_command(1);
-  gc9a01_spi_write_bytes(data, size);
+  gc9a01_spi_write_bytes_raw(data, size);
 }
 
-static void gc9a01_write_u16_stream(const uint16_t *pixels_be, uint32_t count) {
+static void gc9a01_write_u16_stream_locked(const uint16_t *pixels_be,
+                                           uint32_t count) {
   if ((pixels_be == 0) || (count == 0u)) {
     return;
   }
 
   reg_write(RTC_CNTL_STORE5_REG, 0xC340u);
-  gc9a01_spi_write_bytes((const uint8_t *)pixels_be, count * sizeof(uint16_t));
+  gc9a01_data_command(1);
+  gc9a01_spi_write_bytes_raw((const uint8_t *)pixels_be, count * sizeof(uint16_t));
 }
 
 static void gc9a01_run_init_step(uint32_t index, uint8_t command, const uint8_t *data, uint8_t data_len,
@@ -186,23 +269,23 @@ static void gc9a01_run_init_step(uint32_t index, uint8_t command, const uint8_t 
   reg_write(RTC_CNTL_STORE1_REG, index);
   reg_write(RTC_CNTL_STORE2_REG, command);
   reg_write(RTC_CNTL_STORE0_REG, 0xC180u + (index & 0x3Fu));
-  gc9a01_write_command(command);
-  gc9a01_write_data_bytes(data, data_len);
+  gc9a01_begin_write();
+  gc9a01_write_command_locked(command);
+  gc9a01_write_data_bytes_locked(data, data_len);
+  gc9a01_end_write();
   if (delay_ms != 0u) {
     reg_write(RTC_CNTL_STORE0_REG, 0xC1C0u + (index & 0x3Fu));
-    gc9a01_end_write();
     esp32c3_gpio_delay_ms(delay_ms);
-    gc9a01_begin_write();
   }
 }
 
 static void gc9a01_set_rotation0_and_ips_true(void) {
-  static const uint8_t madctl = 0x08u;
+  static const uint8_t madctl = GC9A01_MADCTL_VALUE;
 
   gc9a01_begin_write();
-  gc9a01_write_command(0x36u);
-  gc9a01_write_data_bytes(&madctl, 1u);
-  gc9a01_write_command(0x21u);
+  gc9a01_write_command_locked(0x36u);
+  gc9a01_write_data_bytes_locked(&madctl, 1u);
+  gc9a01_write_command_locked(0x21u);
   gc9a01_end_write();
 }
 
@@ -214,9 +297,11 @@ static void gc9a01_fill_screen(uint16_t color) {
   }
 
   gc9a01_begin_write();
-  gc9a01_begin_ram_write(0u, 0u, ESP32C3_PANEL_GC9A01_WIDTH, ESP32C3_PANEL_GC9A01_HEIGHT);
+  gc9a01_set_addr_window_locked(0u, 0u, ESP32C3_PANEL_GC9A01_WIDTH,
+                                ESP32C3_PANEL_GC9A01_HEIGHT);
   for (uint16_t row = 0u; row < ESP32C3_PANEL_GC9A01_HEIGHT; ++row) {
-    gc9a01_write_u16_stream(g_gc9a01_line_buffer, ESP32C3_PANEL_GC9A01_WIDTH);
+    gc9a01_write_u16_stream_locked(g_gc9a01_line_buffer,
+                                   ESP32C3_PANEL_GC9A01_WIDTH);
   }
   gc9a01_end_write();
 }
@@ -232,57 +317,67 @@ void esp32c3_panel_gc9a01_draw_pixel(uint16_t x, uint16_t y, uint16_t color) {
 
   color_be = gc9a01_swap16(color);
   gc9a01_begin_write();
-  gc9a01_begin_ram_write(x, y, 1u, 1u);
-  gc9a01_write_u16_stream(&color_be, 1u);
+  gc9a01_set_addr_window_locked(gc9a01_map_x(x), gc9a01_map_y(y), 1u, 1u);
+  gc9a01_write_u16_stream_locked(&color_be, 1u);
   gc9a01_end_write();
 }
 
 void esp32c3_panel_gc9a01_fill_rect(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
                                     uint16_t color) {
   uint16_t color_be = gc9a01_swap16(color);
+  uint16_t mapped_x;
+  uint16_t mapped_y;
 
   if ((width == 0u) || (height == 0u) || ((x + width) > ESP32C3_PANEL_GC9A01_WIDTH) ||
       ((y + height) > ESP32C3_PANEL_GC9A01_HEIGHT)) {
     return;
   }
 
+  mapped_x = gc9a01_map_rect_x(x, width);
+  mapped_y = gc9a01_map_rect_y(y, height);
+
   for (uint16_t index = 0u; index < width; ++index) {
     g_gc9a01_line_buffer[index] = color_be;
   }
 
   gc9a01_begin_write();
-  gc9a01_begin_ram_write(x, y, width, height);
+  gc9a01_set_addr_window_locked(mapped_x, mapped_y, width, height);
   for (uint16_t row = 0u; row < height; ++row) {
-    gc9a01_write_u16_stream(g_gc9a01_line_buffer, width);
+    gc9a01_write_u16_stream_locked(g_gc9a01_line_buffer, width);
   }
   gc9a01_end_write();
 }
 
-static void gc9a01_set_addr_window(uint16_t x, uint16_t y, uint16_t width, uint16_t height) {
+static void gc9a01_set_addr_window_locked(uint16_t x, uint16_t y, uint16_t width,
+                                          uint16_t height) {
   uint8_t caset[4] = {(uint8_t)(x >> 8), (uint8_t)(x & 0xFFu),
                       (uint8_t)((x + width - 1u) >> 8),
                       (uint8_t)((x + width - 1u) & 0xFFu)};
   uint8_t raset[4] = {(uint8_t)(y >> 8), (uint8_t)(y & 0xFFu),
                       (uint8_t)((y + height - 1u) >> 8), (uint8_t)((y + height - 1u) & 0xFFu)};
 
-  gc9a01_write_command(0x2A);
-  gc9a01_write_data_bytes(caset, sizeof(caset));
-  gc9a01_write_command(0x2B);
-  gc9a01_write_data_bytes(raset, sizeof(raset));
-  gc9a01_write_command(0x2C);
-}
-
-static void gc9a01_begin_ram_write(uint16_t x, uint16_t y, uint16_t width, uint16_t height) {
-  gc9a01_set_addr_window(x, y, width, height);
-  gc9a01_data_command(1);
+  gc9a01_write_command_locked(0x2Au);
+  gc9a01_write_data_bytes_locked(caset, sizeof(caset));
+  gc9a01_end_write();
+  gc9a01_begin_write();
+  gc9a01_write_command_locked(0x2Bu);
+  gc9a01_write_data_bytes_locked(raset, sizeof(raset));
+  gc9a01_end_write();
+  gc9a01_begin_write();
+  gc9a01_write_command_locked(0x2Cu);
+#if GC9A01_RAMWR_TO_DATA_CYCLES > 0u
+  for (volatile uint32_t i = 0u; i < GC9A01_RAMWR_TO_DATA_CYCLES; ++i) {
+    __asm__ volatile("nop");
+  }
+#endif
 }
 
 void esp32c3_panel_gc9a01_begin_batch(void) {
-  gc9a01_begin_write();
+  (void)0;
 }
 
 void esp32c3_panel_gc9a01_end_batch(void) {
-  gc9a01_end_write();
+  (void)0;
 }
 
 static void gc9a01_write_rect_pixels(const uint16_t *pixels, uint16_t stride, uint16_t x, uint16_t y,
@@ -291,16 +386,7 @@ static void gc9a01_write_rect_pixels(const uint16_t *pixels, uint16_t stride, ui
     return;
   }
 
-  gc9a01_begin_write();
-  gc9a01_begin_ram_write(x, y, width, height);
-  for (uint16_t row = 0u; row < height; ++row) {
-    const uint16_t *source_row = &pixels[(uint32_t)row * stride];
-    for (uint16_t col = 0u; col < width; ++col) {
-      g_gc9a01_line_buffer[col] = gc9a01_swap16(source_row[col]);
-    }
-    gc9a01_write_u16_stream(g_gc9a01_line_buffer, width);
-  }
-  gc9a01_end_write();
+  gc9a01_write_rect_stream_pixels(pixels, stride, x, y, width, height);
 }
 
 static void gc9a01_write_rect_surface(const uint16_t *pixels, uint16_t stride,
@@ -309,14 +395,34 @@ static void gc9a01_write_rect_surface(const uint16_t *pixels, uint16_t stride,
     return;
   }
 
+  gc9a01_write_rect_stream_pixels(&pixels[(uint32_t)rect->y * stride + rect->x], stride, rect->x,
+                                  rect->y, rect->width, rect->height);
+}
+
+static void gc9a01_write_rect_stream_pixels(const uint16_t *pixels, uint16_t stride, uint16_t x,
+                                            uint16_t y, uint16_t width, uint16_t height) {
+  uint16_t mapped_x;
+  uint16_t mapped_y;
+
+  if ((pixels == 0) || (stride < width) || (width == 0u) || (height == 0u) ||
+      ((x + width) > ESP32C3_PANEL_GC9A01_WIDTH) ||
+      ((y + height) > ESP32C3_PANEL_GC9A01_HEIGHT)) {
+    return;
+  }
+
+  mapped_x = gc9a01_map_rect_x(x, width);
+  mapped_y = gc9a01_map_rect_y(y, height);
+
   gc9a01_begin_write();
-  gc9a01_begin_ram_write(rect->x, rect->y, rect->width, rect->height);
-  for (uint16_t row = 0u; row < rect->height; ++row) {
-    const uint16_t *source_row = &pixels[(uint32_t)(rect->y + row) * stride + rect->x];
-    for (uint16_t col = 0u; col < rect->width; ++col) {
+  gc9a01_set_addr_window_locked(mapped_x, mapped_y, width, height);
+  for (uint16_t row = 0u; row < height; ++row) {
+    const uint16_t *source_row = &pixels[(uint32_t)row * stride];
+
+    for (uint16_t col = 0u; col < width; ++col) {
       g_gc9a01_line_buffer[col] = gc9a01_swap16(source_row[col]);
     }
-    gc9a01_write_u16_stream(g_gc9a01_line_buffer, rect->width);
+
+    gc9a01_write_u16_stream_locked(g_gc9a01_line_buffer, width);
   }
   gc9a01_end_write();
 }
@@ -355,11 +461,7 @@ void esp32c3_panel_gc9a01_init(void) {
   esp32c3_gpio_config_output(GC9A01_PIN_DC);
   esp32c3_gpio_config_output(GC9A01_PIN_BL);
   esp32c3_gpio_config_output(GC9A01_PIN_CS);
-  esp32c3_gpio_config_output(GC9A01_PIN_SCK);
-  esp32c3_gpio_config_output(GC9A01_PIN_MOSI);
   esp32c3_gpio_set_level(GC9A01_PIN_BL, 0);
-  esp32c3_gpio_set_level(GC9A01_PIN_SCK, 0);
-  esp32c3_gpio_set_level(GC9A01_PIN_MOSI, 0);
 
   gc9a01_chip_select(1);
   gc9a01_data_command(1);
@@ -384,7 +486,6 @@ void esp32c3_panel_gc9a01_init(void) {
   reg_write(RTC_CNTL_STORE3_REG, 0xC316u);
   reg_write(RTC_CNTL_STORE0_REG, 0xC113u);
 
-  gc9a01_begin_write();
   gc9a01_run_init_step(0u, 0xEFu, 0, 0u, 0u);
   gc9a01_run_init_step(1u, 0xEBu, gc9a01_d_eb_14, 1u, 0u);
   gc9a01_run_init_step(2u, 0xFEu, 0, 0u, 0u);
@@ -433,7 +534,6 @@ void esp32c3_panel_gc9a01_init(void) {
   gc9a01_run_init_step(45u, 0x35u, 0, 0u, 0u);
   gc9a01_run_init_step(46u, 0x11u, 0, 0u, 120u);
   gc9a01_run_init_step(47u, 0x29u, 0, 0u, 20u);
-  gc9a01_end_write();
   reg_write(RTC_CNTL_STORE0_REG, 0xC114u);
 
   gc9a01_set_rotation0_and_ips_true();

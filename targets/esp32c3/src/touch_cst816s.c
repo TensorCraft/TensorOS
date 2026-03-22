@@ -1,5 +1,6 @@
 #include "esp32c3_touch_cst816s.h"
 #include "esp32c3_gpio.h"
+#include "esp32c3_panel_gc9a01.h"
 
 enum {
   CST816S_PIN_SDA = 4,
@@ -172,6 +173,9 @@ int32_t esp32c3_touch_cst816s_read(struct esp32c3_touch_cst816s_sample *sample) 
 
   sample->x = (uint16_t)(((uint16_t)(data[0] & 0x0Fu) << 8) | data[1]);
   sample->y = (uint16_t)(((uint16_t)(data[2] & 0x0Fu) << 8) | data[3]);
+  if (sample->y < ESP32C3_PANEL_GC9A01_HEIGHT) {
+    sample->y = (uint16_t)(ESP32C3_PANEL_GC9A01_HEIGHT - 1u - sample->y);
+  }
   sample->touching = 1u;
   return RUNTIME_SYSCALL_STATUS_OK;
 }

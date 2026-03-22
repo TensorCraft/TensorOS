@@ -3,10 +3,11 @@ BUILD_DIR := build
 IDF_PATH ?= $(HOME)/esp/esp-idf
 IDF_PYTHON ?= $(HOME)/.espressif/python_env/idf6.0_py3.13_env/bin/python
 IDF_PY := IDF_PATH=$(IDF_PATH) $(IDF_PYTHON) $(IDF_PATH)/tools/idf.py
-ESPTOOL ?= esptool.py
+ESPTOOL ?= $(IDF_PYTHON) -m esptool
 ESPPORT ?= /dev/cu.usbmodem11401
 ESPBAUD ?= 460800
 MONITOR_BAUD ?= 115200
+ESPBEFORE ?= usb-reset
 FLASH_SIZE ?= 4MB
 SOC_TARGET ?= esp32c3
 TARGET_DIR := targets/$(SOC_TARGET)
@@ -55,6 +56,11 @@ EXTRA_ASFLAGS ?=
 CFLAGS := $(COMMON_FLAGS) -std=c11 $(EXTRA_CFLAGS)
 ASFLAGS := $(COMMON_FLAGS) -x assembler-with-cpp $(EXTRA_ASFLAGS)
 LDFLAGS := $(ARCH_FLAGS) -nostdlib -Wl,-T,$(LINKER_SCRIPT) -Wl,-Map,$(BUILD_DIR)/$(PROJECT).map -Wl,--gc-sections
+# GCC on this ESP32-C3 bare-metal target can lower a large dense switch in
+# runtime_display_demo.c into a jump-table form that destabilizes display bring-up.
+# Keep this file on the conservative path while the underlying layout-sensitive
+# bug is still being root-caused.
+RUNTIME_DISPLAY_DEMO_CFLAGS := -fno-jump-tables -fno-tree-switch-conversion
 
 COMMON_SRCS_C := \
 	boot/app_desc.c \
@@ -137,6 +143,10 @@ $(BUILD_DIR)/%.o: %.c $(BUILD_CONFIG_STAMP)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/kernel/runtime_display_demo.o: kernel/runtime_display_demo.c $(BUILD_CONFIG_STAMP)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(RUNTIME_DISPLAY_DEMO_CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/%.o: %.S $(BUILD_CONFIG_STAMP)
 	@mkdir -p $(dir $@)
 	$(CC) $(ASFLAGS) -c $< -o $@
@@ -144,7 +154,7 @@ $(BUILD_DIR)/%.o: %.S $(BUILD_CONFIG_STAMP)
 app-image: $(APP_BIN)
 
 $(APP_BIN): $(BUILD_DIR)/$(PROJECT).elf
-	$(ESPTOOL) --chip $(ESPTOOL_CHIP) elf2image --flash_mode dio --flash_freq 40m --flash_size $(FLASH_SIZE) --use-segments --output $@ $<
+	$(ESPTOOL) --chip $(ESPTOOL_CHIP) elf2image --flash-mode dio --flash-freq 40m --flash-size $(FLASH_SIZE) --use-segments --output $@ $<
 
 bootloader-image: $(BOOTLOADER_BIN) $(PARTITION_TABLE_BIN)
 
@@ -154,18 +164,18 @@ $(BOOTLOADER_BIN) $(PARTITION_TABLE_BIN): $(BOOTLOADER_IMAGE_DEPS)
 flash-image: $(FLASH_IMAGE_BIN)
 
 $(FLASH_IMAGE_BIN): bootloader-image $(APP_BIN)
-	$(ESPTOOL) --chip $(ESPTOOL_CHIP) merge_bin --flash_mode dio --flash_freq 40m --flash_size $(FLASH_SIZE) --output $@ $(BOOTLOADER_OFFSET) $(BOOTLOADER_BIN) $(PARTITION_TABLE_OFFSET) $(PARTITION_TABLE_BIN) $(APP_OFFSET) $(APP_BIN)
+	$(ESPTOOL) --chip $(ESPTOOL_CHIP) merge-bin --flash-mode dio --flash-freq 40m --flash-size $(FLASH_SIZE) --output $@ $(BOOTLOADER_OFFSET) $(BOOTLOADER_BIN) $(PARTITION_TABLE_OFFSET) $(PARTITION_TABLE_BIN) $(APP_OFFSET) $(APP_BIN)
 
 flash: $(if $(filter full,$(FLASH_LAYOUT)),flash-image,app-image)
 ifeq ($(FLASH_LAYOUT),full)
-	$(ESPTOOL) --chip $(ESPTOOL_CHIP) --port $(ESPPORT) --baud $(ESPBAUD) write-flash 0x0 $(FLASH_IMAGE_BIN)
+	$(ESPTOOL) --chip $(ESPTOOL_CHIP) --port $(ESPPORT) --before $(ESPBEFORE) --baud $(ESPBAUD) write-flash 0x0 $(FLASH_IMAGE_BIN)
 else
-	$(ESPTOOL) --chip $(ESPTOOL_CHIP) --port $(ESPPORT) --baud $(ESPBAUD) write-flash $(APP_OFFSET) $(APP_BIN)
+	$(ESPTOOL) --chip $(ESPTOOL_CHIP) --port $(ESPPORT) --before $(ESPBEFORE) --baud $(ESPBAUD) write-flash $(APP_OFFSET) $(APP_BIN)
 endif
 	@$(MAKE) capture-serial ESPPORT=$(ESPPORT) MONITOR_BAUD=$(MONITOR_BAUD) SERIAL_CAPTURE_SECONDS=$(SERIAL_CAPTURE_SECONDS)
 
 flash-full: flash-image
-	$(ESPTOOL) --chip $(ESPTOOL_CHIP) --port $(ESPPORT) --baud $(ESPBAUD) write-flash 0x0 $(FLASH_IMAGE_BIN)
+	$(ESPTOOL) --chip $(ESPTOOL_CHIP) --port $(ESPPORT) --before $(ESPBEFORE) --baud $(ESPBAUD) write-flash 0x0 $(FLASH_IMAGE_BIN)
 	@$(MAKE) capture-serial ESPPORT=$(ESPPORT) MONITOR_BAUD=$(MONITOR_BAUD) SERIAL_CAPTURE_SECONDS=$(SERIAL_CAPTURE_SECONDS)
 
 capture-serial:

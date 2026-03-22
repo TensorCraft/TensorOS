@@ -33,8 +33,6 @@ void esp32c3_gpio_config_output_function(uint32_t pin, uint32_t function_value, 
   uint32_t mux_reg;
   uint32_t mux_value;
 
-  (void)function_value;
-
   if (pin > 21u) {
     return;
   }
@@ -42,9 +40,11 @@ void esp32c3_gpio_config_output_function(uint32_t pin, uint32_t function_value, 
   mux_reg = IO_MUX_GPIO_REG(pin);
   mux_value = reg_read(mux_reg);
   mux_value &= ~(IO_MUX_MCU_SEL_MASK | IO_MUX_FUN_PD_BIT | IO_MUX_FUN_PU_BIT);
-  mux_value |= PIN_FUNC_GPIO_VALUE;
+  mux_value |= function_value;
   reg_write(mux_reg, mux_value);
-  reg_write(GPIO_FUNC_OUT_SEL_REG(pin), signal_idx);
+  if (function_value == PIN_FUNC_GPIO_VALUE) {
+    reg_write(GPIO_FUNC_OUT_SEL_REG(pin), signal_idx);
+  }
   esp32c3_gpio_enable_output(pin);
 }
 

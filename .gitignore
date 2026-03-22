@@ -3,3 +3,8 @@ build/
 reference/
 progress.md
 doc/
+hello_world_glyph_grid.pgm
+kernel/runtime_display_demo_generated_chars.inc
+kernel/runtime_display_demo_hello_world.inc
+kernel/runtime_display_demo_manual_font.inc
+kernel/runtime_display_demo_reference_font.inc

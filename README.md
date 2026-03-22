@@ -20,16 +20,30 @@ Current live blocker is the ESP32-C3 round GC9A01 display chain in TensorOS.
   - single pixels
   - small rectangles
   - color wheel / dense gradients
+  - full TensorCore/reference 8x8 font lookup + bit parsing
+  - `hello world` text rendering through dirty-rect local refresh
   - kernel boot and scheduler stability after reverting heavy probe paths
 - Confirmed not solved yet:
-  - stable font rendering
-  - stable small-window glyph / sparse bitmap submission
+  - the deeper layout-sensitive root cause behind flash `rodata` / large dense dispatch regressions
+  - cleanup/refactor work to split the current GC9A01 panel logic into protocol, bus, and board layers
 - Current engineering judgment:
   - font data itself is not the primary issue
-  - the most likely fault is in the handwritten GC9A01 driver transport path, especially
-    `set_addr_window + RAMWR + payload` behavior versus the known-good reference model
-  - current work is converging on replacing TensorOS panel-driver transport semantics with a
-    reference-equivalent implementation, while keeping TensorOS public driver APIs intact
+  - a large dense character-rendering `switch` in `kernel/runtime_display_demo.c` was observed
+    to fail under default `riscv32-esp-elf-gcc -Os` lowering, while the same logic works when
+    compiled with `-fno-jump-tables -fno-tree-switch-conversion`
+  - this strongly suggests a layout-sensitive latent bug in the current bare-metal runtime or
+    display path, rather than a simple font-data error or a generic flash/RAM capacity issue
+  - until the deeper root cause is fixed, the display demo keeps a file-local GCC workaround in
+    the root `Makefile` for `kernel/runtime_display_demo.c`
+  - in the current validated demo path, the `hello world` string is intentionally kept in
+    DRAM-backed `static` storage inside `kernel/runtime_display_demo.c`; earlier attempts to rely
+    on flash-backed string literals, larger flash rodata tables, or indirect rodata dispatch
+    structures produced layout-sensitive regressions including wrong glyph selection and full
+    white-screen failure
+  - the validated text path now uses the TensorCore/reference 8x8 font table via array lookup +
+    bit expansion into a small glyph buffer, then blits into a software backbuffer and commits
+    only dirty rectangles through `display_surface_publish()` and
+    `esp32c3_panel_gc9a01_flush_rect_pixels()`
 
 The codebase is being prepared for multiple SoC targets through a `targets/<soc>/` layout.
 It now also separates ISA-specific code under `arch/<isa>/`.
