@@ -23,8 +23,12 @@ static char g_display_init_start[] = "init_start";
 static char g_display_panel_init_done[] = "panel_init_done";
 static char g_display_mode[] = "display_safe_mode";
 static char g_display_ready[] = "gc9a01 ready";
-static char g_display_hello_world[] = "hello world";
-
+static char g_display_google_g_upper[] = "G";
+static char g_display_google_o_first[] = "o";
+static char g_display_google_o_second[] = "o";
+static char g_display_google_g_lower[] = "g";
+static char g_display_google_l[] = "l";
+static char g_display_google_e[] = "e";
 #include "runtime_display_demo_font8x8.inc"
 
 static uint16_t
@@ -35,6 +39,10 @@ static struct display_surface g_display_surface;
 static uint32_t g_display_last_published_tick;
 static uint32_t g_display_ready_flag;
 static uint8_t g_display_initialized;
+static uint16_t g_google_blue = 0x001Fu;
+static uint16_t g_google_red = 0xF800u;
+static uint16_t g_google_yellow = 0xFFE0u;
+static uint16_t g_google_green = 0x07E0u;
 
 static void runtime_display_demo_clear_backbuffer(uint16_t color) {
   (void)display_surface_fill_rect(&g_display_surface, 0, 0, DISPLAY_DEMO_WIDTH,
@@ -94,36 +102,68 @@ static void runtime_display_demo_draw_fast_text_at(uint16_t x, uint16_t y,
   }
 }
 
-static void runtime_display_demo_draw_reference_r(void) {
-  esp32c3_panel_gc9a01_draw_pixel(198u, 196u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(199u, 196u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(200u, 196u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(201u, 196u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(198u, 197u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(199u, 197u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(202u, 197u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(203u, 197u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(198u, 198u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(199u, 198u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(202u, 198u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(203u, 198u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(198u, 199u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(199u, 199u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(200u, 199u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(201u, 199u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(202u, 199u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(198u, 200u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(199u, 200u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(200u, 200u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(201u, 200u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(198u, 201u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(199u, 201u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(201u, 201u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(202u, 201u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(198u, 202u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(199u, 202u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(202u, 202u, DISPLAY_DEMO_FOREGROUND);
-  esp32c3_panel_gc9a01_draw_pixel(203u, 202u, DISPLAY_DEMO_FOREGROUND);
+static void runtime_display_demo_blit_scaled_glyph(uint16_t x, uint16_t y,
+                                                   const uint16_t *pixels,
+                                                   uint16_t scale) {
+  for (uint16_t row = 0u; row < DISPLAY_DEMO_GLYPH_H; ++row) {
+    for (uint16_t y_repeat = 0u; y_repeat < scale; ++y_repeat) {
+      for (uint16_t col = 0u; col < DISPLAY_DEMO_GLYPH_W; ++col) {
+        const uint16_t pixel =
+            pixels[(uint32_t)row * DISPLAY_DEMO_GLYPH_W + col];
+        for (uint16_t x_repeat = 0u; x_repeat < scale; ++x_repeat) {
+          (void)display_surface_fill_rect(
+              &g_display_surface, (int32_t)(x + col * scale + x_repeat),
+              (int32_t)(y + row * scale + y_repeat), 1, 1, pixel);
+        }
+      }
+    }
+  }
+}
+
+static void runtime_display_demo_draw_google_letter(uint16_t x, uint16_t y,
+                                                    const char *text,
+                                                    uint16_t color,
+                                                    uint16_t scale) {
+  const uint8_t *bitmap;
+
+  if ((text == 0) || (text[0] == 0)) {
+    return;
+  }
+
+  bitmap = runtime_display_demo_lookup_glyph(text[0]);
+  runtime_display_demo_make_glyph_pixels(bitmap, color, DISPLAY_DEMO_BACKGROUND,
+                                         g_display_glyph_buffer);
+  runtime_display_demo_blit_scaled_glyph(x, y, g_display_glyph_buffer, scale);
+}
+
+static void runtime_display_demo_draw_google_wordmark(void) {
+  const uint16_t glyph_scale = 3u;
+  const uint16_t glyph_width = DISPLAY_DEMO_GLYPH_W * glyph_scale;
+  const uint16_t glyph_height = DISPLAY_DEMO_GLYPH_H * glyph_scale;
+  const uint16_t text_width = glyph_width * 6u;
+  const uint16_t origin_x = (uint16_t)((DISPLAY_DEMO_WIDTH - text_width) / 2u);
+  const uint16_t origin_y = (uint16_t)((DISPLAY_DEMO_HEIGHT - glyph_height) / 2u);
+
+  esp32c3_panel_gc9a01_set_madctl(0x08u);
+  runtime_display_demo_clear_backbuffer(DISPLAY_DEMO_BACKGROUND);
+  runtime_display_demo_draw_google_letter(origin_x, origin_y,
+                                          g_display_google_g_upper,
+                                          g_google_blue, glyph_scale);
+  runtime_display_demo_draw_google_letter((uint16_t)(origin_x + glyph_width),
+                                          origin_y, g_display_google_o_first,
+                                          g_google_red, glyph_scale);
+  runtime_display_demo_draw_google_letter(
+      (uint16_t)(origin_x + glyph_width * 2u), origin_y,
+      g_display_google_o_second, g_google_yellow, glyph_scale);
+  runtime_display_demo_draw_google_letter(
+      (uint16_t)(origin_x + glyph_width * 3u), origin_y,
+      g_display_google_g_lower, g_google_blue, glyph_scale);
+  runtime_display_demo_draw_google_letter((uint16_t)(origin_x + glyph_width * 4u),
+                                          origin_y, g_display_google_l,
+                                          g_google_green, glyph_scale);
+  runtime_display_demo_draw_google_letter((uint16_t)(origin_x + glyph_width * 5u),
+                                          origin_y, g_display_google_e,
+                                          g_google_red, glyph_scale);
 }
 
 /* ---------------------------------------------------------------------------
@@ -163,6 +203,10 @@ static void runtime_display_demo_present_pending(void) {
  * =========================================================================*/
 
 void runtime_display_demo_init(void) {
+  if (g_display_initialized != 0u) {
+    return;
+  }
+
   reg_write(RTC_CNTL_STORE0_REG, 0xC100u);
   console_log(g_display_tag, g_display_init_start);
 
@@ -193,12 +237,9 @@ void runtime_display_demo_init(void) {
   console_log(g_display_tag, g_display_mode);
   console_log(g_display_tag, g_display_ready);
 
-  runtime_display_demo_render_frame(0u);
-  runtime_display_demo_draw_fast_text_at(44u, 196u, g_display_hello_world,
-                                         DISPLAY_DEMO_FOREGROUND,
-                                         DISPLAY_DEMO_BACKGROUND);
+  runtime_display_demo_draw_google_wordmark();
   runtime_display_demo_present_pending();
-  runtime_display_demo_draw_reference_r();
+  runtime_display_demo_render_frame(0u);
 }
 
 void runtime_display_demo_publish_tick(uint32_t tick_value) {

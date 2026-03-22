@@ -15,12 +15,23 @@ enum {
 
 enum {
   GC9A01_SIGNAL_SETTLE_CYCLES = 32u,
-  GC9A01_SPI_MAX_TRANSFER_BYTES = 64u,
+  GC9A01_SPI_MAX_TRANSFER_BYTES = 32u,
   GC9A01_RAMWR_TO_DATA_CYCLES = 0u,
 };
 
+enum {
+  GC9A01_SPI_DMA_INT_CLR_REG = SPI2_BASE + 0x0038u,
+  GC9A01_SPI_DMA_INT_RAW_REG = SPI2_BASE + 0x003Cu,
+  GC9A01_SPI_TRANS_DONE_INT_CLR_BIT = BIT(12),
+  GC9A01_SPI_TRANS_DONE_INT_RAW_BIT = BIT(12),
+  GC9A01_SPI_SOFT_RESET_BIT = BIT(27),
+  GC9A01_SPI_SLAVE_MODE_BIT = BIT(26),
+  GC9A01_SPI_DMA_TX_SEG_TRANS_CLR_EN_BIT = BIT(9),
+  GC9A01_SPI_DMA_RX_SEG_TRANS_CLR_EN_BIT = BIT(8),
+};
+
 #ifndef GC9A01_MADCTL_VALUE
-#define GC9A01_MADCTL_VALUE 0x48u
+#define GC9A01_MADCTL_VALUE 0x08u
 #endif
 
 struct gc9a01_init_cmd {
@@ -40,16 +51,16 @@ enum {
 };
 
 static uint8_t gc9a01_d_eb_14[] = {0x14};
-static uint8_t gc9a01_d_84[] = {0x40};
+static uint8_t gc9a01_d_84[] = {0x60};
 static uint8_t gc9a01_d_85[] = {0xFF};
 static uint8_t gc9a01_d_86[] = {0xFF};
 static uint8_t gc9a01_d_87[] = {0xFF};
 static uint8_t gc9a01_d_88[] = {0x0A};
-static uint8_t gc9a01_d_89[] = {0x21};
+static uint8_t gc9a01_d_89[] = {0x23};
 static uint8_t gc9a01_d_8a[] = {0x00};
 static uint8_t gc9a01_d_8b[] = {0x80};
 static uint8_t gc9a01_d_8c[] = {0x01};
-static uint8_t gc9a01_d_8d[] = {0x01};
+static uint8_t gc9a01_d_8d[] = {0x03};
 static uint8_t gc9a01_d_8e[] = {0xFF};
 static uint8_t gc9a01_d_8f[] = {0xFF};
 static uint8_t gc9a01_d_b6[] = {0x00, 0x20};
@@ -60,7 +71,7 @@ static uint8_t gc9a01_d_bc[] = {0x00};
 static uint8_t gc9a01_d_ff[] = {0x60, 0x01, 0x04};
 static uint8_t gc9a01_d_c3[] = {0x13};
 static uint8_t gc9a01_d_c4[] = {0x13};
-static uint8_t gc9a01_d_c9[] = {0x22};
+static uint8_t gc9a01_d_c9[] = {0x30};
 static uint8_t gc9a01_d_be[] = {0x11};
 static uint8_t gc9a01_d_e1[] = {0x10, 0x0E};
 static uint8_t gc9a01_d_df[] = {0x21, 0x0C, 0x02};
@@ -73,6 +84,8 @@ static uint8_t gc9a01_d_ae[] = {0x77};
 static uint8_t gc9a01_d_cd[] = {0x63};
 static uint8_t gc9a01_d_70[] = {0x07, 0x07, 0x04, 0x0E, 0x0F, 0x09, 0x07, 0x08, 0x03};
 static uint8_t gc9a01_d_e8[] = {0x34};
+static uint8_t gc9a01_d_60[] = {0x38, 0x0B, 0x6D, 0x6D, 0x39, 0xF0, 0x6D, 0x6D};
+static uint8_t gc9a01_d_61[] = {0x38, 0xF4, 0x6D, 0x6D, 0x38, 0xF7, 0x6D, 0x6D};
 static uint8_t gc9a01_d_62[] = {0x18, 0x0D, 0x71, 0xED, 0x70, 0x70,
                                  0x18, 0x0F, 0x71, 0xEF, 0x70, 0x70};
 static uint8_t gc9a01_d_63[] = {0x18, 0x11, 0x71, 0xF1, 0x70, 0x70,
@@ -80,8 +93,9 @@ static uint8_t gc9a01_d_63[] = {0x18, 0x11, 0x71, 0xF1, 0x70, 0x70,
 static uint8_t gc9a01_d_64[] = {0x28, 0x29, 0xF1, 0x01, 0xF1, 0x00, 0x07};
 static uint8_t gc9a01_d_66[] = {0x3C, 0x00, 0xCD, 0x67, 0x45, 0x45, 0x10, 0x00, 0x00, 0x00};
 static uint8_t gc9a01_d_67[] = {0x00, 0x3C, 0x00, 0x00, 0x00, 0x01, 0x54, 0x10, 0x32, 0x98};
-static uint8_t gc9a01_d_74[] = {0x10, 0x85, 0x80, 0x00, 0x00, 0x4E, 0x00};
+static uint8_t gc9a01_d_74[] = {0x10, 0x45, 0x80, 0x00, 0x00, 0x4E, 0x00};
 static uint8_t gc9a01_d_98[] = {0x3E, 0x07};
+static uint8_t gc9a01_d_99[] = {0x3E, 0x07};
 
 static uint16_t gc9a01_swap16(uint16_t value) {
   return (uint16_t)((value << 8) | (value >> 8));
@@ -116,7 +130,9 @@ static void gc9a01_write_rect_stream_pixels(const uint16_t *pixels, uint16_t str
 static void gc9a01_spi_write_bytes_raw(const uint8_t *data, uint32_t size);
 static void gc9a01_spi_write_u8_raw(uint8_t value);
 static void gc9a01_spi_wait_idle(void);
-static void gc9a01_spi_prepare_tx_transaction(uint32_t bit_length);
+static void gc9a01_spi_wait_done(void);
+static void gc9a01_spi_sync_regs(void);
+static void gc9a01_spi_reset_fifos(void);
 static void gc9a01_backlight_init(void);
 static void gc9a01_run_init_step(uint32_t index, uint8_t command, const uint8_t *data, uint8_t data_len,
                                  uint16_t delay_ms);
@@ -149,48 +165,68 @@ static void gc9a01_data_command(int level) {
 }
 
 static void gc9a01_spi_init(void) {
-  uint32_t clock_reg = (3u << SPI_CLKDIV_PRE_SHIFT) | (3u << SPI_CLKCNT_N_SHIFT) |
-                       (1u << SPI_CLKCNT_H_SHIFT) | (3u << SPI_CLKCNT_L_SHIFT);
+  uint32_t clock_reg = 0u;
 
   reg_set_bits(SYSTEM_PERIP_CLK_EN0_REG, SYSTEM_SPI2_CLK_EN_BIT);
+  reg_set_bits(SYSTEM_PERIP_CLK_EN0_REG, SYSTEM_SPI2_DMA_CLK_EN_BIT);
   reg_set_bits(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_SPI2_RST_BIT);
+  reg_set_bits(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_SPI2_DMA_RST_BIT);
   reg_clear_bits(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_SPI2_RST_BIT);
+  reg_clear_bits(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_SPI2_DMA_RST_BIT);
 
   reg_write(SPI_CLK_GATE_REG, SPI_CLK_EN_BIT | SPI_MST_CLK_ACTIVE_BIT | SPI_MST_CLK_SEL_BIT);
+  reg_set_bits(SPI_SLAVE_REG, GC9A01_SPI_SOFT_RESET_BIT);
+  reg_clear_bits(SPI_SLAVE_REG, GC9A01_SPI_SOFT_RESET_BIT | GC9A01_SPI_SLAVE_MODE_BIT);
+
+  clock_reg |= (0u << SPI_CLKDIV_PRE_SHIFT);
+  clock_reg |= (7u << SPI_CLKCNT_N_SHIFT);
+  clock_reg |= (3u << SPI_CLKCNT_H_SHIFT);
+  clock_reg |= (7u << SPI_CLKCNT_L_SHIFT);
+
   reg_write(SPI_SLAVE_REG, 0u);
-  reg_write(SPI_DMA_CONF_REG, SPI_SLV_TX_SEG_TRANS_CLR_EN_BIT | SPI_SLV_RX_SEG_TRANS_CLR_EN_BIT);
-  reg_write(SPI_CTRL_REG, 0u);
   reg_write(SPI_USER_REG, 0u);
   reg_write(SPI_USER1_REG, 0u);
   reg_write(SPI_USER2_REG, 0u);
-  reg_write(SPI_CLOCK_REG, clock_reg);
-  reg_write(SPI_DOUT_MODE_REG, 0u);
   reg_write(SPI_MISC_REG, 0u);
+  reg_write(SPI_DMA_CONF_REG, GC9A01_SPI_DMA_TX_SEG_TRANS_CLR_EN_BIT |
+                                   GC9A01_SPI_DMA_RX_SEG_TRANS_CLR_EN_BIT);
+  reg_write(GC9A01_SPI_DMA_INT_CLR_REG, GC9A01_SPI_TRANS_DONE_INT_CLR_BIT);
+
+  reg_set_bits(SPI_USER_REG, SPI_USR_MOSI_BIT);
+  reg_clear_bits(SPI_USER_REG, SPI_DOUTDIN_BIT);
+  reg_write(SPI_CLOCK_REG, clock_reg);
 
   esp32c3_gpio_config_output_function(GC9A01_PIN_SCK, PIN_FUNC_ALT_2_VALUE, FSPICLK_OUT_IDX);
   esp32c3_gpio_config_output_function(GC9A01_PIN_MOSI, PIN_FUNC_ALT_2_VALUE, FSPID_OUT_IDX);
-  reg_write(SPI_CMD_REG, SPI_UPDATE_BIT);
+  gc9a01_spi_reset_fifos();
+  gc9a01_spi_sync_regs();
   gc9a01_spi_wait_idle();
 }
 
 static void gc9a01_spi_wait_idle(void) {
-  while ((reg_read(SPI_CMD_REG) & (SPI_UPDATE_BIT | SPI_USR_BIT)) != 0u) {
+  while ((reg_read(SPI_CMD_REG) & SPI_USR_BIT) != 0u) {
     __asm__ volatile("nop");
   }
 }
 
-static void gc9a01_spi_prepare_tx_transaction(uint32_t bit_length) {
+static void gc9a01_spi_wait_done(void) {
+  while (((reg_read(GC9A01_SPI_DMA_INT_RAW_REG) & GC9A01_SPI_TRANS_DONE_INT_RAW_BIT) == 0u) &&
+         ((reg_read(SPI_CMD_REG) & SPI_USR_BIT) != 0u)) {
+    __asm__ volatile("nop");
+  }
+}
+
+static void gc9a01_spi_sync_regs(void) {
+  reg_set_bits(SPI_CMD_REG, SPI_UPDATE_BIT);
+  while ((reg_read(SPI_CMD_REG) & SPI_UPDATE_BIT) != 0u) {
+    __asm__ volatile("nop");
+  }
+}
+
+static void gc9a01_spi_reset_fifos(void) {
   reg_write(SPI_DMA_CONF_REG, SPI_BUF_AFIFO_RST_BIT | SPI_RX_AFIFO_RST_BIT);
-  reg_write(SPI_DMA_CONF_REG, SPI_SLV_TX_SEG_TRANS_CLR_EN_BIT | SPI_SLV_RX_SEG_TRANS_CLR_EN_BIT);
-  reg_write(SPI_USER_REG, SPI_USR_MOSI_BIT);
-  reg_write(SPI_USER1_REG, 0u);
-  reg_write(SPI_USER2_REG, 0u);
-  reg_clear_bits(SPI_CTRL_REG, SPI_DOUTDIN_BIT);
-  reg_clear_bits(SPI_USER_REG, SPI_CK_OUT_EDGE_BIT);
-  reg_clear_bits(SPI_MISC_REG, SPI_CK_IDLE_EDGE_BIT);
-  reg_write(SPI_MS_DLEN_REG, bit_length - 1u);
-  reg_write(SPI_CMD_REG, SPI_UPDATE_BIT);
-  gc9a01_spi_wait_idle();
+  reg_write(SPI_DMA_CONF_REG, GC9A01_SPI_DMA_TX_SEG_TRANS_CLR_EN_BIT |
+                                   GC9A01_SPI_DMA_RX_SEG_TRANS_CLR_EN_BIT);
 }
 
 static void gc9a01_spi_write_bytes_raw(const uint8_t *data, uint32_t size) {
@@ -204,27 +240,27 @@ static void gc9a01_spi_write_bytes_raw(const uint8_t *data, uint32_t size) {
       chunk_bytes = GC9A01_SPI_MAX_TRANSFER_BYTES;
     }
 
+    gc9a01_spi_wait_idle();
+    gc9a01_spi_reset_fifos();
+    reg_write(GC9A01_SPI_DMA_INT_CLR_REG, GC9A01_SPI_TRANS_DONE_INT_CLR_BIT);
+
     for (uint32_t word_index = 0u; word_index < (GC9A01_SPI_MAX_TRANSFER_BYTES / sizeof(uint32_t));
          ++word_index) {
-      uint32_t word = 0u;
-      uint32_t byte_index = word_index * sizeof(uint32_t);
-      uint32_t copy_len = 0u;
-
-      if (byte_index < chunk_bytes) {
-        copy_len = chunk_bytes - byte_index;
-        if (copy_len > sizeof(uint32_t)) {
-          copy_len = sizeof(uint32_t);
-        }
-        for (uint32_t i = 0u; i < copy_len; ++i) {
-          word |= ((uint32_t)data[offset + byte_index + i]) << (8u * i);
-        }
-      }
-
-      reg_write(SPI_W0_REG + (word_index * sizeof(uint32_t)), word);
+      reg_write(SPI_W0_REG + (word_index * sizeof(uint32_t)), 0u);
     }
 
-    gc9a01_spi_prepare_tx_transaction(chunk_bytes * 8u);
-    reg_write(SPI_CMD_REG, SPI_USR_BIT);
+    for (uint32_t byte_index = 0u; byte_index < chunk_bytes; ++byte_index) {
+      const uint32_t word_index = byte_index / sizeof(uint32_t);
+      const uint32_t shift = (byte_index % sizeof(uint32_t)) * 8u;
+      const uint32_t reg = SPI_W0_REG + (word_index * sizeof(uint32_t));
+      reg_write(reg, reg_read(reg) | ((uint32_t)data[offset + byte_index] << shift));
+    }
+
+    reg_write(SPI_MS_DLEN_REG, (chunk_bytes * 8u - 1u) & SPI_MS_DATA_BITLEN_MASK);
+    gc9a01_spi_sync_regs();
+    reg_set_bits(SPI_CMD_REG, SPI_USR_BIT);
+    gc9a01_spi_wait_done();
+    reg_write(GC9A01_SPI_DMA_INT_CLR_REG, GC9A01_SPI_TRANS_DONE_INT_CLR_BIT);
     gc9a01_spi_wait_idle();
     offset += chunk_bytes;
   }
@@ -348,6 +384,13 @@ void esp32c3_panel_gc9a01_fill_rect(uint16_t x, uint16_t y, uint16_t width, uint
   gc9a01_end_write();
 }
 
+void esp32c3_panel_gc9a01_set_madctl(uint8_t value) {
+  gc9a01_begin_write();
+  gc9a01_write_command_locked(0x36u);
+  gc9a01_write_data_bytes_locked(&value, 1u);
+  gc9a01_end_write();
+}
+
 static void gc9a01_set_addr_window_locked(uint16_t x, uint16_t y, uint16_t width,
                                           uint16_t height) {
   uint8_t caset[4] = {(uint8_t)(x >> 8), (uint8_t)(x & 0xFFu),
@@ -358,12 +401,8 @@ static void gc9a01_set_addr_window_locked(uint16_t x, uint16_t y, uint16_t width
 
   gc9a01_write_command_locked(0x2Au);
   gc9a01_write_data_bytes_locked(caset, sizeof(caset));
-  gc9a01_end_write();
-  gc9a01_begin_write();
   gc9a01_write_command_locked(0x2Bu);
   gc9a01_write_data_bytes_locked(raset, sizeof(raset));
-  gc9a01_end_write();
-  gc9a01_begin_write();
   gc9a01_write_command_locked(0x2Cu);
 #if GC9A01_RAMWR_TO_DATA_CYCLES > 0u
   for (volatile uint32_t i = 0u; i < GC9A01_RAMWR_TO_DATA_CYCLES; ++i) {
@@ -524,16 +563,19 @@ void esp32c3_panel_gc9a01_init(void) {
   gc9a01_run_init_step(35u, 0xCDu, gc9a01_d_cd, 1u, 0u);
   gc9a01_run_init_step(36u, 0x70u, gc9a01_d_70, 9u, 0u);
   gc9a01_run_init_step(37u, 0xE8u, gc9a01_d_e8, 1u, 0u);
-  gc9a01_run_init_step(38u, 0x62u, gc9a01_d_62, 12u, 0u);
-  gc9a01_run_init_step(39u, 0x63u, gc9a01_d_63, 12u, 0u);
-  gc9a01_run_init_step(40u, 0x64u, gc9a01_d_64, 7u, 0u);
-  gc9a01_run_init_step(41u, 0x66u, gc9a01_d_66, 10u, 0u);
-  gc9a01_run_init_step(42u, 0x67u, gc9a01_d_67, 10u, 0u);
-  gc9a01_run_init_step(43u, 0x74u, gc9a01_d_74, 7u, 0u);
-  gc9a01_run_init_step(44u, 0x98u, gc9a01_d_98, 2u, 0u);
-  gc9a01_run_init_step(45u, 0x35u, 0, 0u, 0u);
-  gc9a01_run_init_step(46u, 0x11u, 0, 0u, 120u);
-  gc9a01_run_init_step(47u, 0x29u, 0, 0u, 20u);
+  gc9a01_run_init_step(38u, 0x60u, gc9a01_d_60, 8u, 0u);
+  gc9a01_run_init_step(39u, 0x61u, gc9a01_d_61, 8u, 0u);
+  gc9a01_run_init_step(40u, 0x62u, gc9a01_d_62, 12u, 0u);
+  gc9a01_run_init_step(41u, 0x63u, gc9a01_d_63, 12u, 0u);
+  gc9a01_run_init_step(42u, 0x64u, gc9a01_d_64, 7u, 0u);
+  gc9a01_run_init_step(43u, 0x66u, gc9a01_d_66, 10u, 0u);
+  gc9a01_run_init_step(44u, 0x67u, gc9a01_d_67, 10u, 0u);
+  gc9a01_run_init_step(45u, 0x74u, gc9a01_d_74, 7u, 0u);
+  gc9a01_run_init_step(46u, 0x98u, gc9a01_d_98, 2u, 0u);
+  gc9a01_run_init_step(47u, 0x99u, gc9a01_d_99, 2u, 0u);
+  gc9a01_run_init_step(48u, 0x35u, 0, 0u, 0u);
+  gc9a01_run_init_step(49u, 0x11u, 0, 0u, 120u);
+  gc9a01_run_init_step(50u, 0x29u, 0, 0u, 20u);
   reg_write(RTC_CNTL_STORE0_REG, 0xC114u);
 
   gc9a01_set_rotation0_and_ips_true();
